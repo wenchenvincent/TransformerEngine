@@ -10,6 +10,9 @@
 #include <cublasLt.h>
 #include <cublas_v2.h>
 #include "../common.h"
+#include <iostream>
+#include <cstdlib>
+#include <string>
 
 namespace {
 
@@ -26,6 +29,25 @@ cudaDataType_t get_cuda_dtype(const transformer_engine::DType t) {
       return CUDA_R_8F_E4M3;
     case DType::kFloat8E5M2:
       return CUDA_R_8F_E5M2;
+    default:
+      NVTE_ERROR("Invalid type");
+  }
+}
+
+
+std::string get_dtype_string(const transformer_engine::DType t) {
+  using namespace transformer_engine;
+  switch (t) {
+    case DType::kFloat16:
+      return "fp16";
+    case DType::kFloat32:
+      return "fp32";
+    case DType::kBFloat16:
+      return "bf16";
+    case DType::kFloat8E4M3:
+      return "fp8";
+    case DType::kFloat8E5M2:
+      return "bf8";
     default:
       NVTE_ERROR("Invalid type");
   }
@@ -70,6 +92,37 @@ void cublas_gemm(const Tensor *inputA,
   const cudaDataType_t B_type = get_cuda_dtype(inputB->data.dtype);
   const cudaDataType_t D_type = get_cuda_dtype(outputD->data.dtype);
   const cudaDataType_t bias_type = get_cuda_dtype(inputBias->data.dtype);
+
+  bool nvte_log_gemm_config = false;
+  if (const char* env_p = std::getenv("NVTE_LOG_GEMM_CONFIG") ) {
+    if (env_p != nullptr && std::string(env_p) == "1")
+      nvte_log_gemm_config = true;
+  }
+
+  if (nvte_log_gemm_config) {
+    float A_scale_inv, B_scale_inv;
+    if (A_scale_inverse != nullptr)
+      cudaMemcpy(&A_scale_inv, A_scale_inverse, sizeof(float), cudaMemcpyDeviceToHost);
+    if (B_scale_inverse != nullptr)
+      cudaMemcpy(&B_scale_inv, B_scale_inverse, sizeof(float), cudaMemcpyDeviceToHost);
+    std::cout << "m=" << m << " k=" << k << " n=" << n 
+	      << " transa=" << (transa==CUBLAS_OP_T?"T":"N")
+	      << " transb=" << (transb==CUBLAS_OP_T?"T":"N")
+	      << " A_type=" << get_dtype_string(inputA->data.dtype)
+	      << " B_type=" << get_dtype_string(inputB->data.dtype)
+	      << " D_type=" << get_dtype_string(outputD->data.dtype)
+	      << " bias_type=" << get_dtype_string(inputBias->data.dtype)
+	      << " grad=" << grad
+	      << " bias=" << bias
+	      << " gelu=" << gelu
+	      << " use_fp8=" << use_fp8
+              << " A_scale_inverse=" <<  A_scale_inv
+	      << " B_scale_inverse=" <<  B_scale_inv
+	      << " accumulate=" << accumulate
+	      << " use_split_accumulator=" << use_split_accumulator
+	      << " math_sm_count=" << math_sm_count
+	      << std::endl;
+  }
 
   NVTE_CHECK(!is_fp8_dtype(inputA->data.dtype) || A_scale_inverse != nullptr,
              "FP8 input to GEMM requires inverse of scale!");
